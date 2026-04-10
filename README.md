@@ -1,5 +1,7 @@
 # InkTime v6 — Smartwatch cu E-Paper
 
+![PCB 3D view](Images/3dpcb.jpg)
+
 ## 1. Diagramă Bloc
 
 Proiectul este construit în jurul microcontrollerului `nRF52840`, care gestionează comunicația wireless (Bluetooth), afișajul și senzorii.
