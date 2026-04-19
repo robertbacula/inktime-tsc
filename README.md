@@ -20,7 +20,7 @@ InkTime v6 este un proiect hardware open-source de smartwatch bazat pe nRF52840,
 
 Diagrama bloc este prezentata ca imagine:
 
-![Diagrama bloc InkTime](Images/block-diagram.jpg)
+![Diagrama bloc InkTime](Images/block_diagram.jpg)
 
 Flux de functionare:
 
