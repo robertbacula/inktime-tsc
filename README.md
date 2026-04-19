@@ -18,95 +18,9 @@ InkTime v6 este un proiect hardware open-source de smartwatch bazat pe nRF52840,
 
 ## Diagrama bloc
 
-Diagrama urmatoare include toate subsistemele majore si relatiile dintre ele (putere, date, control):
+Diagrama bloc este prezentata ca imagine:
 
-```mermaid
-flowchart TB
-    subgraph PWR[Subsistem alimentare]
-        USB[USB-C VBUS 5V]
-        CHG[BQ25180
-        Li-Ion Charger]
-        BAT[LiPo 3.7V]
-        REG[RT6160A
-        3.3V Rail]
-        SWP[DMG2305UX
-        Load Switch]
-        USB --> CHG
-        BAT <--> CHG
-        BAT ==> REG
-        REG ==> SWP
-    end
-
-    subgraph CORE[nRF52840 Core]
-        MCU[nRF52840
-        Cortex-M4F + BLE]
-        XTALH[X1 32MHz]
-        XTALL[X2 32.768kHz]
-        ANT[2450AT18B
-        Chip Antenna]
-        XTALH --> MCU
-        XTALL --> MCU
-        MCU --> ANT
-    end
-
-    subgraph PERI[Periferice]
-        EPD_DRV[EPD Power + Driver Stage]
-        EPD[Display E-Paper 1.54"]
-        IMU[BMA423 IMU]
-        FG[MAX17048 Fuel Gauge]
-        HAP[DRV2605 Haptic Driver]
-        MTR[Motor vibratii]
-        BTN[3x Butoane]
-        DBG[TC2030 SWD]
-    end
-
-    PHONE[Telefon / BLE App]
-
-    SWP ==> MCU
-    SWP ==> EPD_DRV
-    SWP ==> IMU
-    SWP ==> FG
-    SWP ==> HAP
-
-    MCU -->|SPI + GPIO| EPD_DRV
-    EPD_DRV --> EPD
-
-    MCU <--> |I2C| IMU
-    MCU <--> |I2C| FG
-    MCU <--> |I2C| HAP
-
-    BTN -->|GPIO IRQ| MCU
-    DBG -->|SWD| MCU
-    HAP --> MTR
-    MCU <--> |BLE 2.4GHz| PHONE
-```
-
-Daca viewer-ul Markdown nu randaza Mermaid, foloseste varianta compatibila de mai jos:
-
-```text
-+--------------------------- SUBSISTEM ALIMENTARE ---------------------------+
-|  USB-C 5V --> BQ25180 Charger <--> LiPo 3.7V --> RT6160A 3.3V --> PMOS    |
-+---------------------------------------------------------------------------+
-                                      |
-                                      v
-+-------------------------- nRF52840 (Cortex-M4F + BLE) --------------------+
-|  X1 32MHz --> MCU    X2 32.768kHz --> MCU    ANT <-- RF matching network   |
-+---------------------------------------------------------------------------+
-        | SPI+GPIO                   | I2C                     | GPIO/SWD
-        v                            v                         v
- +-------------------+    +---------------------+      +--------------------+
- | EPD Driver Stage  |    | BMA423 IMU          |      | 3x Buttons         |
- | + Power for EPD   |    | MAX17048 FuelGauge  |      | TC2030 SWD Header  |
- +---------+---------+    | DRV2605 Haptic      |      +--------------------+
-           |              +----------+----------+
-           v                         |
- +-------------------+               v
- | E-Paper 1.54"     |        +------------------+
- | Display            |        | Vibration Motor  |
- +-------------------+        +------------------+
-
-                     MCU <-----------------------> Telefon / BLE App
-```
+![Diagrama bloc InkTime](Images/block-diagram.jpg)
 
 Flux de functionare:
 
