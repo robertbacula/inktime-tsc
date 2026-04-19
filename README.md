@@ -1,82 +1,305 @@
-# InkTime v6 — Smartwatch cu E-Paper
+# InkTime v6 - Smartwatch Open Hardware cu E-Paper
 
-![PCB 3D view](Images/3dpcb.jpg)
+![InkTime - vedere generala](Images/inktime-full-watch.jpg)
 
-## 1. Diagramă Bloc
+InkTime v6 este un proiect hardware open-source de smartwatch bazat pe nRF52840, optimizat pentru consum redus, autonomie mare si integrare mecanica compacta. Documentatia de mai jos este structurata pentru review tehnic si include arhitectura sistemului, BOM, maparea pinilor, analiza de consum si observatii de design.
 
-Proiectul este construit în jurul microcontrollerului `nRF52840`, care gestionează comunicația wireless (Bluetooth), afișajul și senzorii.
+## Cuprins
 
-- Creier: `nRF52840` (MCU + BLE)
-- Afișaj: E-Paper (consum ultra-redus)
-- Senzori: IMU `BMA421` pentru detectarea mișcării și gesturilor
-- Power Management: Încărcător LiPo, Fuel Gauge (monitorizare baterie) și convertoare DC/DC
-- Interfață Utilizator: 3 butoane fizice și un motor haptic pentru notificări
+- [Diagrama bloc](#diagrama-bloc)
+- [Bill of Materials (BOM)](#bill-of-materials-bom)
+- [Functionalitate hardware detaliata](#functionalitate-hardware-detaliata)
+- [Maparea pinilor nRF52840](#maparea-pinilor-nrf52840)
+- [Analiza consumului de energie](#analiza-consumului-de-energie)
+- [Design PCB si integrare mecanica](#design-pcb-si-integrare-mecanica)
+- [Design log si observatii pentru review](#design-log-si-observatii-pentru-review)
+- [Structura repository-ului](#structura-repository-ului)
+- [Licenta](#licenta)
 
-## 2. Bill Of Materials (BOM)
+## Diagrama bloc
 
-| Componentă | Descriere                 | Link Achiziție (JLC) | Datasheet |
-| ---------- | ------------------------- | -------------------- | --------- |
-| nRF52840   | MCU Bluetooth 5.4         | JLC PartsLink        | Datasheet |
-| BMA421     | Accelerometru 3 axe (IMU) | JLC PartsLink        | Datasheet |
-| BQ25180    | Li-Ion Charger IC         | JLC PartsLink        | Datasheet |
-| MAX17048   | Fuel Gauge (Baterie)      | JLC PartsLink        | Datasheet |
-| DRV2605    | Haptic Driver (LRA/ERM)   | JLC PartsLink        | Datasheet |
-| RT610AWSC  | Buck-Boost DC/DC          | JLC PartsLink        | Datasheet |
+Diagrama urmatoare include toate subsistemele majore si relatiile dintre ele (putere, date, control):
 
-## 3. Descrierea Detaliată a Funcționalității Hardware
+```mermaid
+flowchart TB
+    subgraph PWR[Subsistem alimentare]
+        USB[USB-C VBUS 5V]
+        CHG[BQ25180
+        Li-Ion Charger]
+        BAT[LiPo 3.7V]
+        REG[RT6160A
+        3.3V Rail]
+        SWP[DMG2305UX
+        Load Switch]
+        USB --> CHG
+        BAT <--> CHG
+        BAT ==> REG
+        REG ==> SWP
+    end
 
-### Microcontroller (MCU)
+    subgraph CORE[nRF52840 Core]
+        MCU[nRF52840
+        Cortex-M4F + BLE]
+        XTALH[X1 32MHz]
+        XTALL[X2 32.768kHz]
+        ANT[2450AT18B
+        Chip Antenna]
+        XTALH --> MCU
+        XTALL --> MCU
+        MCU --> ANT
+    end
 
-Inima sistemului este `nRF52840`, ales pentru suportul nativ de Bluetooth 5, consumul extrem de mic în deep-sleep și arhitectura ARM Cortex-M4F capabilă pentru procesări complexe (de ex. algoritmi pentru fitness și procesare IMU).
+    subgraph PERI[Periferice]
+        EPD_DRV[EPD Power + Driver Stage]
+        EPD[Display E-Paper 1.54"]
+        IMU[BMA423 IMU]
+        FG[MAX17048 Fuel Gauge]
+        HAP[DRV2605 Haptic Driver]
+        MTR[Motor vibratii]
+        BTN[3x Butoane]
+        DBG[TC2030 SWD]
+    end
 
-### Afișaj (E-Paper)
+    PHONE[Telefon / BLE App]
 
-- Conector de 24 pini pentru ecranul E-Paper.
-- Ecranul este alimentat printr-un E-Paper Drive Circuit dedicat (vezi pagina 2 din schemă).
-- Circuitul include un boost (L5, D2, D4, D5) pentru generarea tensiunilor necesare refresh-ului.
-- Controlul afișajului se face printr-o interfață SPI dedicată pentru operații rapide de refresh.
+    SWP ==> MCU
+    SWP ==> EPD_DRV
+    SWP ==> IMU
+    SWP ==> FG
+    SWP ==> HAP
 
-### Managementul Energiei
+    MCU -->|SPI + GPIO| EPD_DRV
+    EPD_DRV --> EPD
 
-- Încărcare: port USB-C gestionat de `BQ25180`.
-- Monitorizare: `MAX17048` comunică prin I2C și raportează SoC fără rezistor extern de descărcare.
-- Reglare: `RT610AWSC` asigură o tensiune stabilă de 3.3V când bateria LiPo scade sub prag critic.
+    MCU <--> |I2C| IMU
+    MCU <--> |I2C| FG
+    MCU <--> |I2C| HAP
 
-### Senzori și Feedback
+    BTN -->|GPIO IRQ| MCU
+    DBG -->|SWD| MCU
+    HAP --> MTR
+    MCU <--> |BLE 2.4GHz| PHONE
+```
 
-- `BMA421` (IMU): conectat prin I2C — folosit pentru numărare pași și detecție „wrist flip” (aprinderea ecranului la mișcare).
-- `DRV2605` (Haptic Driver): oferă vibrații avansate (LRA/ERM) pentru notificări și experiență premium.
+Daca viewer-ul Markdown nu randaza Mermaid, foloseste varianta compatibila de mai jos:
 
-## 4. Mapare și descriere pini nRF52840
+```text
++--------------------------- SUBSISTEM ALIMENTARE ---------------------------+
+|  USB-C 5V --> BQ25180 Charger <--> LiPo 3.7V --> RT6160A 3.3V --> PMOS    |
++---------------------------------------------------------------------------+
+                                      |
+                                      v
++-------------------------- nRF52840 (Cortex-M4F + BLE) --------------------+
+|  X1 32MHz --> MCU    X2 32.768kHz --> MCU    ANT <-- RF matching network   |
++---------------------------------------------------------------------------+
+        | SPI+GPIO                   | I2C                     | GPIO/SWD
+        v                            v                         v
+ +-------------------+    +---------------------+      +--------------------+
+ | EPD Driver Stage  |    | BMA423 IMU          |      | 3x Buttons         |
+ | + Power for EPD   |    | MAX17048 FuelGauge  |      | TC2030 SWD Header  |
+ +---------+---------+    | DRV2605 Haptic      |      +--------------------+
+           |              +----------+----------+
+           v                         |
+ +-------------------+               v
+ | E-Paper 1.54"     |        +------------------+
+ | Display            |        | Vibration Motor  |
+ +-------------------+        +------------------+
 
-Mai jos este o descriere adaptată a pinilor principali ai `nRF52840` prezentați în schemă. Am reformulat puțin explicațiile pentru claritate.
+                     MCU <-----------------------> Telefon / BLE App
+```
 
-- `VDD` — alimentarea de 3.3V pentru SoC.
-- `DCC` — (semnal de control intern, documentația schemei trebuie consultată pentru detalii precise).
-- `DEC4`, `DEC3`, `DEC5`, `DEC1` — pini de decuplare/masă folosiți de circuitele interne de reglare a tensiunii (folosiți pentru integritatea alimentării).
-- `VSS` — masă (GND).
-- `P0.02 / AIN0` — pin folosit pentru semnale de tip SPI: SCK (clock) și, în unele variante de rutare, MOSI (Master Out Slave In). În schemă acesta servește ca linie de ceas pentru tranzacțiile cu display-ul.
-- `DEC2` — masă (GND) pentru etajele asociate.
-- `XC2`, `XC1` — pini pentru cristalul/external oscillator X1 (32 MHz).
-- `ANT` — conexiunea către amplificator/antena 2.4GHz (prin rețea de potrivire).
-- `P0.10 / NFC2` — pin folosit, probabil, pentru semnalizarea Fuel Gauge-ului către MCU atunci când bateria scade sub un prag (interrupt/alert).
-- `SWDIO`, `SWDCLK`, `SWO` — pini dedicati debugging/programare (SWD).
-- `P1.18 / RESET` — pinul de reset (reset hardware al microcontroller-ului).
-- `P0.17`, `P0.16`, `P0.15` — pini alocați comunicării și controlului display-ului (transfer de date / comenzi SPI sau semnale de control).
-- `D-`, `D+` — liniile diferențiale de date USB pentru tranzacționarea pachetelor USB.
-- `VBUS` — alimentarea USB (5V) pe portul USB-C.
-- `DEC3V3` — etichetat în schemă lângă GND; pare legat de blocurile de decuplare ale rail-ului 3.3V (verificare recomandată în schematică).
-- `P0.12` — enable/enable-driver pentru controlul driverului haptic (`DRV2605` sau MOSFET-ul asociat).
-- `P0.11` — semnal de monitorizare/alertă venit de la LiPo charger (semnalizare a stării de încărcare/erori alimentare).
-- `P1.08`, `P0.08` — pini folosiți ca intreruperi (IRQ) pentru modulul IMU (`BMA421`).
-- `P0.07`, `P0.06` — linii folosite de protocolul I2C (SDA / SCL) în această implementare.
-- `P0.05 / AIN3` — chip select (CS) pentru display.
-- `XL2`, `XL1` — pini pentru cristalul/external oscillator X2 (32.768 kHz) folosit de RTC.
-- `P0.13`, `P0.14`, `P1.02` — GPIO alocate pentru citirea butoanelor fizice.
+Flux de functionare:
 
-Observație: pinii etichetați `DECx` sunt în principal legați de circuitele de decuplare/reglare internă ale SoC-ului — ei apar frecvent în schemă pentru stabilitatea alimentării.
+1. USB-C alimenteaza incarcatorul BQ25180 si bateria LiPo.
+2. Din baterie se genereaza rail-ul de 3.3V (RT6160A), comutat catre sarcina prin PMOS.
+3. nRF52840 colecteaza date de la IMU/fuel gauge si controleaza display-ul prin SPI.
+4. Pentru notificari locale, nRF52840 activeaza DRV2605 care comanda motorul haptic.
+5. BLE asigura schimb de date si configurare cu telefonul.
 
-## 5. Design Log și Note Review
+## Bill of Materials (BOM)
 
-- USB-C: implementat cu protecție ESD pe liniile de date (`USBLC6-2`) pentru a proteja MCU-ul de descărcări electrostatice.
-- E-Paper VCC Control: utilizare MOSFET (`Q1`) pentru a întrerupe complet alimentarea etajului ecranului când nu este în refresh, maximizând autonomia bateriei.
+Tabelul de mai jos acopera componentele principale. Pentru pasivele individuale, consultati schema si listele de asamblare exportate din CAD.
+
+| #   | Ref  | Componenta              | Cod / Valoare     | JLC Parts                                                                                                 | Datasheet                                                                                                        |
+| --- | ---- | ----------------------- | ----------------- | --------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| 1   | U1   | MCU BLE                 | nRF52840-QIAA     | [C190794](https://jlcpcb.com/parts/componentSearch?isSearch=true&searchTxt=nRF52840)                      | [nRF52840 PS](https://infocenter.nordicsemi.com/pdf/nRF52840_PS_v1.8.pdf)                                        |
+| 2   | IC2  | Li-Ion Charger          | BQ25180YBGR       | [C2682092](https://jlcpcb.com/parts/componentSearch?isSearch=true&searchTxt=BQ25180)                      | [TI BQ25180](https://www.ti.com/lit/ds/symlink/bq25180.pdf)                                                      |
+| 3   | IC9  | Buck DC/DC              | RT6160AWSC        | [C2828036](https://jlcpcb.com/parts/componentSearch?isSearch=true&searchTxt=RT6160A)                      | [Richtek RT6160A](https://www.richtek.com/assets/product_file/RT6160A/DS6160A-05.pdf)                            |
+| 4   | U3   | Fuel Gauge              | MAX17048G+T10     | [C2682766](https://jlcpcb.com/parts/componentSearch?isSearch=true&searchTxt=MAX17048)                     | [MAX17048/49](https://datasheets.maximintegrated.com/en/ds/MAX17048-MAX17049.pdf)                                |
+| 5   | IC3  | IMU                     | BMA423            | [C2831316](https://jlcpcb.com/parts/componentSearch?isSearch=true&searchTxt=BMA423)                       | [Bosch BMA423](https://www.bosch-sensortec.com/products/motion-sensors/accelerometers/bma423/)                   |
+| 6   | IC1  | Driver haptic           | DRV2605YZFR       | [C527680](https://jlcpcb.com/parts/componentSearch?isSearch=true&searchTxt=DRV2605)                       | [TI DRV2605](https://www.ti.com/lit/ds/symlink/drv2605.pdf)                                                      |
+| 7   | D1   | Protectie ESD USB       | USBLC6-2SC6Y      | [C7519](https://jlcpcb.com/parts/componentSearch?isSearch=true&searchTxt=USBLC6-2SC6Y)                    | [ST USBLC6-2](https://www.st.com/resource/en/datasheet/usblc6-2.pdf)                                             |
+| 8   | Q1   | PMOS load switch        | DMG2305UX-7       | [C150812](https://jlcpcb.com/parts/componentSearch?isSearch=true&searchTxt=DMG2305UX)                     | [DMG2305UX](https://www.diodes.com/assets/Datasheets/DMG2305UX.pdf)                                              |
+| 9   | Q3   | N-MOS (motor/periferic) | SI1308EDL-T1-GE3  | [C515086](https://jlcpcb.com/parts/componentSearch?isSearch=true&searchTxt=SI1308EDL)                     | [SI1308EDL](https://www.vishay.com/docs/68743/si1308edl.pdf)                                                     |
+| 10  | J1   | FPC conector EPD        | 503480-2400 (24p) | [C585393](https://jlcpcb.com/parts/componentSearch?isSearch=true&searchTxt=503480-2400)                   | [Molex 503480](https://www.molex.com/pdm_docs/sd/5034802400_sd.pdf)                                              |
+| 11  | J4   | USB-C conector          | KH-TYPE-C-16P     | [C2765186](https://jlcpcb.com/parts/componentSearch?isSearch=true&searchTxt=KH-TYPE-C-16P)                | [USB Type-C Spec](https://www.usb.org/document-library/usb-type-cr-cable-and-connector-specification-release-22) |
+| 12  | ANT1 | Antena chip 2.4GHz      | 2450AT18B100E     | [Search JLC](https://jlcpcb.com/parts/componentSearch?isSearch=true&searchTxt=2450AT18B100E)              | [Johanson 2450AT18B100E](https://www.johansontechnology.com/datasheets/2450AT18B100E.pdf)                        |
+| 13  | J2   | Header debug            | TC2030-IDC        | [Search JLC](https://jlcpcb.com/parts/componentSearch?isSearch=true&searchTxt=TC2030)                     | [Tag-Connect TC2030](https://www.tag-connect.com/wp-content/uploads/bsk-pdf-manager/TC2030-IDC-NL-10_NL_1.pdf)   |
+| 14  | X1   | Cristal HF              | 32MHz             | [Search JLC](https://jlcpcb.com/parts/componentSearch?isSearch=true&searchTxt=32MHz%20crystal%202016)     | [Exemplu 32MHz](https://www.ecsxtal.com/store/pdf/ECS-160-12-33Q.pdf)                                            |
+| 15  | X2   | Cristal LF              | 32.768kHz         | [Search JLC](https://jlcpcb.com/parts/componentSearch?isSearch=true&searchTxt=32.768kHz%20crystal%203215) | [Exemplu 32.768kHz](https://www.abracon.com/Resonators/ABS07.pdf)                                                |
+
+## Functionalitate hardware detaliata
+
+### 1) Procesare si conectivitate - nRF52840
+
+- CPU: ARM Cortex-M4F @ 64MHz
+- Memorie: 1MB Flash, 256KB RAM
+- Radio: BLE 5.x la 2.4GHz
+- Interfete folosite in proiect: SPI, I2C, GPIO, USB FS, SWD
+
+Rol functional:
+
+- ruleaza logica aplicatiei si machine-state-ul ceasului
+- centralizeaza datele de la senzori
+- controleaza secventa de refresh pentru e-paper
+- gestioneaza notificari BLE si feedback haptic
+
+### 2) Display e-paper (1.54") + etaj driver
+
+Display-ul e-paper este comandat pe SPI, cu semnale separate de control (`DC`, `RST`, `BUSY`, `CS`). Avantajul major este consumul aproape zero in stare statica; energia se consuma aproape exclusiv la refresh.
+
+Interfata:
+
+- SPI pentru payload grafic
+- GPIO pentru sincronizare/stare (`BUSY`) si comenzi
+
+### 3) IMU BMA423
+
+IMU-ul este conectat pe I2C si utilizat pentru:
+
+- step counting
+- wake-on-motion / wrist raise
+- detectie evenimente contextuale
+
+Poate genera intreruperi catre MCU pentru reducerea polling-ului si optimizare de consum.
+
+### 4) Management baterie - BQ25180 + MAX17048 + RT6160A
+
+- BQ25180: incarcare LiPo din VBUS (USB-C)
+- MAX17048: monitorizare starea bateriei (SOC, tensiune)
+- RT6160A: conversie stabila catre 3.3V pentru sistem
+
+Acest lant permite operare corecta atat pe USB, cat si pe baterie, cu telemetrie energetica pentru estimarea autonomiei.
+
+### 5) Haptic - DRV2605 + motor
+
+DRV2605 genereaza profile haptice controlate de MCU (I2C + trigger), iar etajul de putere comuta motorul pentru feedback la notificari, alarme si interactiuni UI.
+
+### 6) USB-C, protectie ESD si debug
+
+- USB-C ofera VBUS pentru incarcare si (optional) date USB FS.
+- USBLC6-2 reduce riscul de defect la descarcari electrostatice pe D+/D-.
+- Header-ul TC2030 expune SWD pentru flash/debug si test de productie.
+
+## Maparea pinilor nRF52840
+
+Maparea de mai jos este cea utilizata in schema proiectului pentru functiile principale.
+
+| Pin nRF52840  | Semnal / Componenta | Interfata | Directie | Motiv alegere                          |
+| ------------- | ------------------- | --------- | -------- | -------------------------------------- |
+| P0.02         | EPD_SCK             | SPI       | Out      | Clock stabil pentru transfer display   |
+| P0.03         | EPD_MOSI            | SPI       | Out      | Date catre e-paper                     |
+| P0.28         | EPD_MISO            | SPI       | In       | Citire status/date display             |
+| P0.29         | EPD_CS              | GPIO/SPI  | Out      | Selectie dispozitiv e-paper            |
+| P0.04         | EPD_DC              | GPIO      | Out      | Selectie data/comanda                  |
+| P0.05         | EPD_RST             | GPIO      | Out      | Reset hardware display                 |
+| P0.06         | EPD_BUSY            | GPIO      | In       | Sincronizare pe stare busy             |
+| P0.26         | I2C_SDA             | I2C       | I/O      | Magistrala comuna senzori/power        |
+| P0.27         | I2C_SCL             | I2C       | Out      | Clock I2C comun                        |
+| P0.13         | SW_UP               | GPIO IRQ  | In       | Buton up, interrupt la apasare         |
+| P0.14         | SW_ENT              | GPIO IRQ  | In       | Buton enter, UI action                 |
+| P0.15         | SW_DN               | GPIO IRQ  | In       | Buton down, navigare                   |
+| P0.18         | USB_D-              | USB FS    | I/O      | Linie USB dedicata (minus)             |
+| P0.20         | USB_D+              | USB FS    | I/O      | Linie USB dedicata (plus)              |
+| P0.00 / P0.01 | XL1 / XL2           | LFCLK     | I/O      | Cristal 32.768kHz pentru RTC low-power |
+| XC1 / XC2     | X1 32MHz            | HFCLK     | I/O      | Ceas principal CPU/RF                  |
+| SWDIO         | SWD_DATA            | SWD       | I/O      | Programare si debugging                |
+| SWDCLK        | SWD_CLK             | SWD       | In       | Ceas SWD                               |
+| SWO           | SWO_TRACE           | SWD       | Out      | Trace/telemetrie debug                 |
+| ANT           | Antena BLE          | RF        | Out      | Iesire RF catre retea de matching      |
+
+Rationale general pentru mapare:
+
+1. SPI-ul display-ului este grupat compact pentru rutare scurta si integritate buna a semnalelor.
+2. Toate perifericele lente (IMU, fuel gauge, haptic) sunt pe I2C comun pentru economie de pini.
+3. Butoanele sunt pe GPIO-uri configurabile cu intreruperi, pentru wake-up din low power.
+4. USB foloseste pinii dedicati ai MCU pentru compatibilitate fizica si software.
+
+## Analiza consumului de energie
+
+Estimare orientativa pe scenariu "smartwatch normal" (ecran actualizat periodic, BLE advertising, wake pe evenimente):
+
+| Bloc                 | Curent activ | Curent sleep/idle | Duty cycle estimat | Curent mediu |
+| -------------------- | -----------: | ----------------: | -----------------: | -----------: |
+| nRF52840 (CPU + BLE) |  3.2mA-4.8mA |             1.5uA |               5-6% |       ~210uA |
+| E-Paper (refresh)    |        ~15mA |       ~0uA static |               0.5% |        ~75uA |
+| BMA423               |       ~150uA |             ~14uA |          10% activ |        ~28uA |
+| MAX17048             |         23uA |              23uA |               100% |         23uA |
+| DRV2605 + motor      |   ~50mA varf |           ~0.25uA |               0.1% |        ~50uA |
+| RT6160A quiescent    |            - |             ~25uA |               100% |         25uA |
+| **Total estimat**    |            - |                 - |                  - |   **~410uA** |
+
+Pentru baterie de 250mAh:
+
+- autonomie teoretica: `250mAh / 0.41mA = ~609h` (~25 zile)
+- cu profil agresiv de sleep si refresh rar: 30-40+ zile (in functie de firmware si trafic BLE)
+
+## Design PCB si integrare mecanica
+
+### PCB
+
+![PCB 3D](Images/3dpcb.jpg)
+
+- layout realizat in fisierele `Hardware/project-tsc.sch` si `Hardware/project-tsc-2d-pcb.brd`
+- topologia include zona RF dedicata, sectiune alimentare separata si trasee de semnal scurte catre conectorul EPD
+- protectie ESD pe USB si puncte de test pentru bring-up
+
+### Integrare mecanica
+
+![Vedere asamblare extinsa](Images/inktime-3d-expanded-view.jpg)
+![Vedere fara ecran](Images/inktime-watch-no-screen.jpg)
+
+- modele 3D disponibile in `Mechanical/InkTime3D.f3z` si `Mechanical/InkTime3D.step`
+- verificari importante: inaltime baterie, spatiu FPC display, pozitie butoane laterale, clearance pentru motorul haptic
+
+## Design log si observatii pentru review
+
+Design log (sintetic):
+
+1. Definire arhitectura (MCU, putere, senzori, afisaj)
+2. Captura schema si validare ERC
+3. Placement cu prioritizare RF/power/display
+4. Routing + optimizari DRC/ground return
+5. Export productie si validare mecanica 3D
+
+Observatii utile pentru review:
+
+- verificati zona antenei: keepout de cupru sub antenna + matching network conform recomandari vendor
+- confirmati polaritatea pentru bateria LiPo si sensul diodei Schottky
+- verificati secventa de power-up EPD in firmware, pentru a evita refresh instabil
+- recomandat test incremental: power rail -> SWD -> I2C -> EPD -> BLE
+
+## Structura repository-ului
+
+```text
+inktime-tsc/
+|- Hardware/
+|  |- project-tsc.sch
+|  |- project-tsc-2d-pcb.brd
+|- Images/
+|  |- 3dpcb.jpg
+|  |- inktime-full-watch.jpg
+|  |- inktime-3d-expanded-view.jpg
+|  |- inktime-watch-no-screen.jpg
+|- Manufacturing/
+|  |- inktime_gerber.zip
+|- Mechanical/
+|  |- InkTime3D.f3z
+|  |- InkTime3D.step
+|- LICENSE
+|- README.md
+```
+
+## Licenta
+
+Proiectul este distribuit conform fisierului `LICENSE` din acest repository.
